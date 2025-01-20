@@ -1,12 +1,10 @@
 ﻿// See https://aka.ms/new-console-template for more information
 
 using System.IdentityModel.Tokens.Jwt;
-using System.Net.Http.Headers;
 using System.Security.Claims;
 using IdentityModel;
 using IdentityModel.Client;
 using IdentityModel.OidcClient;
-using IdentityModel.OidcClient.Browser;
 using IdentityModel.OidcClient.DPoP;
 using Microsoft.IdentityModel.Tokens;
 
@@ -31,8 +29,6 @@ class Program
     
     private const string AuthorityUrl = "https://helseid-sts.test.nhn.no";
     private const string ClientId = "e1df09c7-6ccf-4a38-a3f7-545ac665b10a";
-    private const int LocalhostPort = 8089;
-    private static readonly string RedirectUri = $"http://localhost:{LocalhostPort.ToString()}/callback";
     
     private const string ApiResource1 = "nhn:kjernejournal";
     private const string ApiResource2 = "nhn:phr";
@@ -51,59 +47,36 @@ class Program
     static async Task Main()
     {
         using var httpClient = new HttpClient();
+
         var discoveryDocument = await httpClient.GetDiscoveryDocumentAsync(AuthorityUrl);
 
-        var dpopProofCreator = new DPoPProofCreator(new SecurityKey(JwkPrivateKey, "PS256"));
+        var browser = new SystemBrowser();
+        var redirectUri = $"http://localhost:{browser.Port}/callback";
+
+        var clientAssertion = new ClientAssertion
+        {
+            Type = OidcConstants.ClientAssertionTypes.JwtBearer,
+            Value = BuildClientAssertion(ClientId, discoveryDocument.Issuer!, CreateSigningCredentials(JwkPrivateKey))
+        };
 
         var options = new OidcClientOptions
         {
             Authority = AuthorityUrl,
             ClientId = ClientId,
-            RedirectUri = RedirectUri,
+            RedirectUri = redirectUri,
+            ClientAssertion = clientAssertion,
             LoadProfile = false,
-            IdentityTokenValidator = new JwtHandlerIdentityTokenValidator()
+            IdentityTokenValidator = new JwtHandlerIdentityTokenValidator(),
+            Resource = [ApiResource1, ApiResource2],
+            Scope = string.Join(' ', AllScopes),
+            Browser = browser
         };
         options.ConfigureDPoP(JwkPrivateKey);
+
         var oidcClient = new OidcClient(options);
 
-        var authorizeState = await oidcClient.PrepareLoginAsync();
-        
-        var clientAssertion = new ClientAssertion
-        {
-            Type = OidcConstants.ClientAssertionTypes.JwtBearer,
-            Value = BuildClientAssertion(ClientId, discoveryDocument.Issuer!, CreateSigningCredentials(JwkPrivateKey)),
-        };
-        
-        var pushedAuthorizationResponse = await httpClient.GetPushedAuthorizationResponseAsync(
-            discoveryDocument.PushedAuthorizationRequestEndpoint!,
-            ClientId,
-            RedirectUri,
-            clientAssertion,
-            authorizeState,
-            resources: [ApiResource1, ApiResource2],
-            scopes: AllScopes);
-        
-        if (pushedAuthorizationResponse.IsError)
-        {
-            throw new Exception($"{pushedAuthorizationResponse.Error}: JSON: {pushedAuthorizationResponse.Json}");
-        }
-        
-        var authorizeUrl = $"{discoveryDocument.AuthorizeEndpoint}?client_id={ClientId}&request_uri={pushedAuthorizationResponse.RequestUri}";
-        var browserOptions = new BrowserOptions(authorizeUrl, RedirectUri);
-        var browser = new SystemBrowser(port: LocalhostPort);
-        var browserResult = await browser.InvokeAsync(browserOptions, default);
-        
-        var parameters = new Parameters
-        {
-            {"resource", ApiResource1}
-        };
+        var loginResult = await oidcClient.LoginAsync();
 
-        oidcClient.Options.ClientAssertion = new ClientAssertion
-        {
-            Type = OidcConstants.ClientAssertionTypes.JwtBearer,
-            Value = BuildClientAssertion(ClientId, discoveryDocument.Issuer!, CreateSigningCredentials(JwkPrivateKey)),
-        };
-        var loginResult = await oidcClient.ProcessResponseAsync(browserResult.Response, authorizeState, parameters);
         if (!loginResult.IsError)
         {
             loginResult = loginResult.ValidateIdentityClaims();
@@ -113,28 +86,24 @@ class Program
         {
             throw new Exception($"{loginResult.Error}: Description: {loginResult.ErrorDescription}");
         }
-        
-        var accessToken1 = loginResult.AccessToken;
-        var refreshToken = loginResult.RefreshToken;
 
-        Console.WriteLine("First request, resource: " + ApiResource1);
-        Console.WriteLine("Access Token: " + accessToken1);
-        Console.WriteLine("Refresh Token: " + refreshToken);
+        Console.WriteLine($"First request, resources: {ApiResource1}, {ApiResource2}");
+        Console.WriteLine("Access Token: " + loginResult.AccessToken);
+        Console.WriteLine("Refresh Token: " + loginResult.RefreshToken);
         Console.WriteLine();
         
         // Get AccessToken for ApiResource2
+        var parameters = new Parameters
+        {
+            { "resource", ApiResource2 }
+        };
         oidcClient.Options.ClientAssertion = new ClientAssertion
         {
             Type = OidcConstants.ClientAssertionTypes.JwtBearer,
             Value = BuildClientAssertion(ClientId, discoveryDocument.Issuer!, CreateSigningCredentials(JwkPrivateKey)),
         };
-        parameters = new Parameters
-        {
-            {"resource", ApiResource2}
-        };
-        
-        var refreshTokenResult = await oidcClient.RefreshTokenAsync(refreshToken, parameters);
 
+        var refreshTokenResult = await oidcClient.RefreshTokenAsync(loginResult.RefreshToken, parameters);
         if (refreshTokenResult.IsError)
         {
             throw new Exception($"{refreshTokenResult.Error}: Description: {refreshTokenResult.ErrorDescription}");
@@ -144,109 +113,12 @@ class Program
         Console.WriteLine("Access Token: " + refreshTokenResult.AccessToken);
         Console.WriteLine("Refresh Token: " + refreshTokenResult.RefreshToken);
         Console.WriteLine();
-        
-        
-        // Call Patient Health Records API
-        // /pingauth
-        oidcClient.Options.ClientAssertion = new ClientAssertion
-        {
-            Type = OidcConstants.ClientAssertionTypes.JwtBearer,
-            Value = BuildClientAssertion(ClientId, discoveryDocument.Issuer!, CreateSigningCredentials(JwkPrivateKey), GenerateAttestation("994598759", "994598759"))
-        };
-        parameters = new Parameters
-        {
-            { "resource", ApiResource2 }
-        };
-        refreshTokenResult = await oidcClient.RefreshTokenAsync(refreshTokenResult.RefreshToken, parameters);
-        
-        //Console.WriteLine(refreshTokenResult.AccessToken);
-        
-        //_ = await CallPhrPingAuth(httpClient, dpopProofCreator, refreshTokenResult.AccessToken);
-
-        //var response = await CallPhrDocumentSearch(httpClient, dpopProofCreator, refreshTokenResult.AccessToken);
-
-        var response = await CallPhrGetDocument(httpClient, dpopProofCreator, refreshTokenResult.AccessToken);
-        
-        Console.WriteLine(response.StatusCode);
-        Console.WriteLine(await response.Content.ReadAsStringAsync());
 
         var logoutResult = await oidcClient.LogoutAsync(new LogoutRequest { IdTokenHint = loginResult.IdentityToken });
-        //Console.WriteLine(logoutResult.Response);
-    }
+        Console.WriteLine(logoutResult.Response);
 
-    private static string PjdBaseUrl = "https://api.pjd.test.nhn.no";
-    private static async Task<HttpResponseMessage> CallPhrPingAuth(HttpClient httpClient, DPoPProofCreator proofCreator, string accessToken)
-    {
-        var proof = proofCreator.CreateDPoPProof($"{PjdBaseUrl}/pingauth", "GET", accessToken: accessToken);
-        httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("DPoP", accessToken);
-        httpClient.DefaultRequestHeaders.Add("DPoP", proof);
-        var response = await httpClient.GetAsync($"{PjdBaseUrl}/pingauth");
-        Console.WriteLine(response.StatusCode);
-        return response;
-    }
-
-    private static async Task<HttpResponseMessage> CallPhrDocumentSearch(HttpClient httpClient,
-        DPoPProofCreator proofCreator, string accessToken)
-    {
-        var proof = proofCreator.CreateDPoPProof($"{PjdBaseUrl}/R4/fhir/DocumentReference/_search", "POST", accessToken: accessToken);
-        httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("DPoP", accessToken);
-        httpClient.DefaultRequestHeaders.Add("DPoP", proof);
-        // httpClient.DefaultRequestHeaders.Add("Accept", "application/fhir+json; fhirVersion=4.0");
-        httpClient.DefaultRequestHeaders.Add("Content", "application/x-www-form-urlencoded");
-        var urlencodedContent = new FormUrlEncodedContent([
-            new("patient.identifier", "13116900216"),
-            new("status", "current")
-        ]);
-        Console.WriteLine(await urlencodedContent.ReadAsStringAsync());
-        return await httpClient.PostAsync($"{PjdBaseUrl}/R4/fhir/DocumentReference/_search",
-            urlencodedContent);
-    }
-    
-    private static async Task<HttpResponseMessage> CallPhrGetDocument(HttpClient httpClient,
-        DPoPProofCreator proofCreator, string accessToken)
-    {
-        var proof = proofCreator.CreateDPoPProof($"https://api.pjd.test.nhn.no/mhd/iti68/document", "GET", accessToken: accessToken);
-        httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("DPoP", accessToken);
-        httpClient.DefaultRequestHeaders.Add("DPoP", proof);
-        return await httpClient.GetAsync("https://api.pjd.test.nhn.no/mhd/iti68/document?documentUniqueId=928a2672-1604-43d5-8fcf-4bb2ae62e890&repositoryUniqueId=2.16.578.1.12.4.6.1.2&homeCommunityId=urn:oid:2.16.578.1.12.4.6.1.2");
-    }
-    
-    private static string GenerateAttestation(string legalEntity, string pointOfCare)
-    {
-        return $$"""
-            {
-                "type": "nhn:tillitsrammeverk:parameters",
-                    "practitioner": {
-                        "authorization": {
-                        "code": "LE",
-                        "system": "urn:oid:2.16.578.1.12.4.1.1.9060"
-                    },
-                    "legal_entity": {
-                        "id": "{{legalEntity}}",
-                        "system": "urn:oid:2.16.578.1.12.4.1.4.101"
-                    },
-                    "point_of_care": {
-                        "id": "{{pointOfCare}}",
-                        "system": "urn:oid:2.16.578.1.12.4.1.4.101"
-                    }
-                },
-                "care_relationship": {
-                    "purpose_of_use": {
-                      "code": "TREAT",
-                      "system": "urn:oid:2.16.840.1.113883.1.11.20448"
-                    },
-                    "healthcare_service": {
-                        "code": "S03",
-                        "system": "urn:oid:2.16.578.1.12.4.1.1.8655"
-                    },
-                    "decision_ref": {
-                        "id": "30F4AB40-DBC2-41A7-8AC4-181AD3FDC25B",
-                        "user_selected": true
-                    }
-                },
-                "patients": [{}]
-            }
-            """;
+        Console.WriteLine("Press any key to continue. . .");
+        Console.ReadLine();
     }
 
     private static string GenerateHelseIdAuthorizationForSingleTenant(string organizationNumber)
