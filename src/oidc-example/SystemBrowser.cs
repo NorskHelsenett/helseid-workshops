@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Net;
+using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using IdentityModel.OidcClient.Browser;
 
@@ -7,11 +9,20 @@ namespace oidc.example;
 // This class opens up the system browser in order to log in a user and get the authorization code back
 public class SystemBrowser : IBrowser
 {
-    private int Port { get; }
+    public int Port { get; }
 
-    public SystemBrowser(int port)
+    public SystemBrowser(int? port = null)
     {
-        Port = port;
+        Port = port ?? GetRandomUnusedPort();
+    }
+
+    private int GetRandomUnusedPort()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        return port;
     }
 
     public async Task<BrowserResult> InvokeAsync(BrowserOptions options, CancellationToken cancellationToken)
