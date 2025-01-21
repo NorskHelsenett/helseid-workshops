@@ -8,7 +8,7 @@ using IdentityModel.OidcClient;
 using IdentityModel.OidcClient.DPoP;
 using Microsoft.IdentityModel.Tokens;
 
-namespace oidc.example;
+namespace OidcWithParAndDPoP;
 
 class Program
 {

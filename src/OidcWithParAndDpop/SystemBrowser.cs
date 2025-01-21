@@ -4,7 +4,7 @@ using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using IdentityModel.OidcClient.Browser;
 
-namespace oidc.example;
+namespace OidcWithParAndDPoP;
 
 // This class opens up the system browser in order to log in a user and get the authorization code back
 public class SystemBrowser : IBrowser

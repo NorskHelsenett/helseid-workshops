@@ -6,7 +6,7 @@ using IdentityModel.Client;
 using IdentityModel.OidcClient;
 using Microsoft.AspNetCore.WebUtilities;
 
-namespace oidc.example;
+namespace OidcWithParAndDPoP;
 
 public static class HttpClientOidcExtensions
 {

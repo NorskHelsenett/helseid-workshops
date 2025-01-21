@@ -1,6 +1,6 @@
 using IdentityModel.OidcClient;
 
-namespace oidc.example;
+namespace OidcWithParAndDPoP;
 
 public static class LoginResultExtensions
 {

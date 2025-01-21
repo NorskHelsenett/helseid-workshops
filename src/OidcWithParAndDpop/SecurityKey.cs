@@ -1,4 +1,4 @@
-namespace oidc.example;
+namespace OidcWithParAndDPoP;
 
 public class SecurityKey
 {

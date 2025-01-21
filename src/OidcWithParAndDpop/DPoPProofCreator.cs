@@ -4,7 +4,7 @@ using System.Text;
 using IdentityModel;
 using Microsoft.IdentityModel.Tokens;
 
-namespace oidc.example;
+namespace OidcWithParAndDPoP;
 
 public class DPoPProofCreator
 {
