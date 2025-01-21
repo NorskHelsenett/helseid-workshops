@@ -116,9 +116,6 @@ class Program
 
         var logoutResult = await oidcClient.LogoutAsync(new LogoutRequest { IdTokenHint = loginResult.IdentityToken });
         Console.WriteLine(logoutResult.Response);
-
-        Console.WriteLine("Press any key to continue. . .");
-        Console.ReadLine();
     }
 
     private static string GenerateHelseIdAuthorizationForSingleTenant(string organizationNumber)
