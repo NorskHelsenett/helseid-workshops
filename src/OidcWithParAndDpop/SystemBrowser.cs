@@ -27,11 +27,12 @@ public class SystemBrowser : IBrowser
 
     public async Task<BrowserResult> InvokeAsync(BrowserOptions options, CancellationToken cancellationToken)
     {
-        using var listener = new LoopbackHttpListener(Port);
-        OpenBrowser(options.StartUrl);
-
+        LoopbackHttpListener? listener = null;
         try
         {
+            listener = new LoopbackHttpListener(Port);
+            OpenBrowser(options.StartUrl);
+
             var result = await listener.WaitForCallbackAsync();
 
             if (string.IsNullOrWhiteSpace(result))
@@ -48,6 +49,10 @@ public class SystemBrowser : IBrowser
         catch (Exception ex)
         {
             return new BrowserResult { ResultType = BrowserResultType.UnknownError, Error = ex.Message };
+        }
+        finally
+        {
+            listener?.Dispose();
         }
     }
 
