@@ -27,20 +27,22 @@ static async Task<bool> PromptForAction()
 
     if (clientConfig == null)
     {
-        AnsiConsole.WriteLine("HelseID client not configured");
+        AnsiConsole.MarkupLine("[bold red]HelseID client not configured[/]");
     }
     else
     {
         var jwk = new JwkWithMetadata(clientConfig.ClientJwk);
-        AnsiConsole.WriteLine($"HelseID client id: {clientConfig.ClientId}");
-        AnsiConsole.WriteLine($"HelseID client key id: {jwk.Kid}");
+        AnsiConsole.MarkupLine($"HelseID client id: [bold green]{clientConfig.ClientId}[/]");
+        AnsiConsole.MarkupLine($"HelseID client key id: [bold green]{jwk.Kid}[/]");
     }
+
+    AnsiConsole.WriteLine();
 
     var choices = new List<string>();
 
     if (clientConfig == null)
     {
-        choices.Add("Create client");
+        choices.Add("Create HelseId client");
     }
     else
     {
@@ -48,17 +50,18 @@ static async Task<bool> PromptForAction()
         choices.Add("Check client status");
         choices.Add("Renew client key");
         choices.Add("Add scope");
+        choices.Add("List delegations");
     }
 
     choices.Add("Exit");
 
     var action = AnsiConsole.Prompt(
         new SelectionPrompt<string>()
-            .Title("What do you want to do?")
+            .Title("[bold]What do you want to do?[/]")
             .AddChoices(choices));
     switch (action)
     {
-        case "Create client":
+        case "Create HelseId client":
             await AnsiConsole.Status()
                 .StartAsync("Starting client creation...", async ctx => await CreateClient(config, ctx));
             break;
@@ -79,6 +82,10 @@ static async Task<bool> PromptForAction()
             await AnsiConsole.Status()
                 .StartAsync("Renewing key...", async ctx => await RotateClientKey(config, clientConfig!, ctx));
             break;
+        case "List delegations":
+            await AnsiConsole.Status()
+                .StartAsync("Listing delegations...", async ctx => await ListDelegations(config, clientConfig!, ctx));
+            break;
         default:
             return false;
     }
@@ -88,24 +95,24 @@ static async Task<bool> PromptForAction()
 
 static async Task CreateClient(Config config, StatusContext statusContext)
 {
+    AnsiConsole.MarkupLine($"Client org.no. will be [bold blue]{config.ClientDraft.OrganizationNumber}[/]");
+
     statusContext.Status("Creating client draft...");
 
     var jwk = KeyGenerator.GenerateRsaJwk();
-    AnsiConsole.MarkupLine($"Generated JWK with KID: {jwk.Kid}");
+    AnsiConsole.MarkupLine($"Generated JWK with KID: [bold blue]{jwk.Kid}[/]");
 
     var redirectUri = $"http://localhost:{config.LocalHttpServer.RedirectPort}";
     var redirectPath = $"/{config.LocalHttpServer.RedirectPath}";
     using var authHttpClient = new AuthHttpClient(jwk);
 
     var clientId = (await SubmitClientDraft(config, jwk.PublicValue, authHttpClient)).ClientId;
-    AnsiConsole.MarkupLine($"Created client draft with client ID: {clientId}");
-
-    new ClientConfig(clientId, jwk.PublicAndPrivateValue).Save();
+    AnsiConsole.MarkupLine($"Created client draft with client ID: [bold blue]{clientId}[/]");
 
     statusContext.Status("Waiting for user confirmation...");
 
     var confirmationStatus = await ConfirmClientDraft(config, clientId, redirectUri, redirectPath);
-    AnsiConsole.MarkupLine($"Status retrieved: {confirmationStatus}");
+    AnsiConsole.MarkupLine($"Status retrieved: [bold blue]{confirmationStatus}[/]");
 
     if (confirmationStatus != "Success")
     {
@@ -114,6 +121,8 @@ static async Task CreateClient(Config config, StatusContext statusContext)
     }
 
     AnsiConsole.MarkupLine("Client confirmed");
+
+    new ClientConfig(clientId, jwk.PublicAndPrivateValue).Save();
 
     statusContext.Status($"Waiting for HelseID cache to refresh...");
     await Task.Delay(TimeSpan.FromSeconds(10));
@@ -140,7 +149,7 @@ static async Task CreateClient(Config config, StatusContext statusContext)
         return;
     }
 
-    AnsiConsole.MarkupLine("Client is ready");
+    AnsiConsole.MarkupLine("[bold green]Client is ready[/]");
 
     PrintClientDetails(currentClient);
 }
@@ -286,6 +295,7 @@ static async Task CheckClientStatus(Config config, ClientConfig clientConfig, St
     statusContext.Status("Getting client info...");
 
     var clientInfo = await authHttpClient.Get<CurrentClient>(config.Selvbetjening.ClientUri, accessToken: accessToken);
+
     PrintClientDetails(clientInfo);
 }
 
@@ -321,6 +331,35 @@ static async Task<string> ConfirmClientDraft(Config config, string clientId, str
     var confirmationStatus = confirmationDict["status"];
 
     return confirmationStatus;
+}
+
+static async Task ListDelegations(Config config, ClientConfig clientConfig, StatusContext statusContext)
+{
+    var clientData = new SystemClientData
+    {
+        Authority = config.HelseId.Authority,
+        ClientId = clientConfig.ClientId,
+        Jwk = new JwkWithMetadata(clientConfig.ClientJwk),
+        Scopes = config.ClientDraft.ApiScopes.Where(s => s.StartsWith(selvbetjeningResource)).ToArray(),
+    };
+
+    statusContext.Status("Getting access token...");
+    var accessToken = await GetClientCredentialsAccessToken(clientData);
+
+    using var authHttpClient = new AuthHttpClient(clientData.Jwk);
+
+    statusContext.Status("Getting delegations...");
+
+    var delegations = await authHttpClient.Get<MultiTenantDelegation[]>(config.Selvbetjening.DelegationsUri, accessToken: accessToken);
+
+    var json =
+        JsonSerializer.Serialize(delegations, JsonDefaults.JsonSerializerOptions);
+    AnsiConsole.Write(
+        new Panel(new JsonText(json))
+            .Header("Delegations")
+            .Collapse()
+            .RoundedBorder()
+            .BorderColor(Color.Yellow));
 }
 
 static Dictionary<string, string> QuerystringToDictionary(string confirmationResult)
