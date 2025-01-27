@@ -52,19 +52,16 @@ class Program
 
         var browser = new SystemBrowser();
         var redirectUri = $"http://localhost:{browser.Port}/callback";
-
-        var clientAssertion = new ClientAssertion
-        {
-            Type = OidcConstants.ClientAssertionTypes.JwtBearer,
-            Value = BuildClientAssertion(ClientId, discoveryDocument.Issuer!, CreateSigningCredentials(JwkPrivateKey))
-        };
-
         var options = new OidcClientOptions
         {
             Authority = AuthorityUrl,
             ClientId = ClientId,
             RedirectUri = redirectUri,
-            ClientAssertion = clientAssertion,
+            GetClientAssertionAsync = () => Task.FromResult(new ClientAssertion
+            {
+                Type = OidcConstants.ClientAssertionTypes.JwtBearer,
+                Value = BuildClientAssertion(ClientId, discoveryDocument.Issuer!, CreateSigningCredentials(JwkPrivateKey))
+            }),
             LoadProfile = false,
             IdentityTokenValidator = new JwtHandlerIdentityTokenValidator(),
             Resource = [ApiResource1, ApiResource2],
@@ -96,11 +93,6 @@ class Program
         var parameters = new Parameters
         {
             { "resource", ApiResource2 }
-        };
-        oidcClient.Options.ClientAssertion = new ClientAssertion
-        {
-            Type = OidcConstants.ClientAssertionTypes.JwtBearer,
-            Value = BuildClientAssertion(ClientId, discoveryDocument.Issuer!, CreateSigningCredentials(JwkPrivateKey)),
         };
 
         var refreshTokenResult = await oidcClient.RefreshTokenAsync(loginResult.RefreshToken, parameters);
